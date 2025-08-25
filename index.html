@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>القبعـة الذكية — Mr Nashmi (ويب)</title>
+
+  <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@latest/dist/face-api.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
+
+  <style>
+    :root{ --bg:#0b1020; --card:#121931; --ink:#ecf3ff; --ink-dim:#9fb0d3; --acc:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; }
+    *{box-sizing:border-box}
+    body{margin:0;background:linear-gradient(180deg,#0b1020,#0e1530);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Noto Kufi Arabic",Tahoma,sans-serif}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;background:rgba(0,0,0,.25);backdrop-filter:blur(6px);position:sticky;top:0;z-index:10;border-bottom:1px solid rgba(255,255,255,.06)}
+    header h1{margin:0;font-size:20px;display:flex;gap:10px;align-items:center}
+    header small{color:var(--ink-dim);font-weight:500}
+    .wrap{max-width:1100px;margin:18px auto;padding:0 16px}
+    .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}
+    @media (max-width: 980px){.grid{grid-template-columns:1fr}}
+    .card{background:var(--card);border:1px solid rgba(255,255,255,.06);border-radius:18px;box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden}
+    .card h2{margin:0;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);font-size:16px;background:rgba(255,255,255,.02)}
+    .stage{position:relative;aspect-ratio:16/10;background:#0a0f1f;}
+    video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0}
+    .badges{position:absolute;left:10px;bottom:10px;display:flex;flex-wrap:wrap;gap:6px;z-index:3}
+    .badge{background:rgba(255,255,255,.08);padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid rgba(255,255,255,.08)}
+    .toolbar{display:flex;gap:10px;padding:12px;border-top:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02);flex-wrap:wrap}
+    button,select,.ghost{appearance:none;background:#0f1731;color:var(--ink);border:1px solid rgba(255,255,255,.1);padding:10px 14px;border-radius:12px;font-weight:600;cursor:pointer}
+    button:hover{border-color:rgba(255,255,255,.2)}
+    button[disabled]{opacity:.5;cursor:not-allowed}
+    .pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
+    .log{height:260px;overflow:auto;padding:12px;font-family:ui-monospace,Consolas,monospace;background:#0d1328}
+    .item{padding:8px 10px;border-bottom:1px dashed rgba(255,255,255,.06);display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .muted{color:var(--ink-dim)}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .kbd{background:#111a35;border:1px solid rgba(255,255,255,.12);border-bottom-color:rgba(0,0,0,.35);padding:2px 6px;border-radius:6px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+    .chip{padding:4px 8px;border-radius:999px;background:#0f1731;border:1px solid rgba(255,255,255,.08);font-size:12px}
+    .danger{border-color:var(--err);color:#ffe4e6}
+    footer{padding:24px 16px;color:var(--ink-dim);text-align:center}
+    .dot{width:8px;height:8px;border-radius:999px;display:inline-block;background:#aaa}
+    .dot.on{background:#22c55e}
+    .select{display:flex;align-items:center;gap:8px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📷 القبعـة الذكية — <small>Mr Nashmi</small></h1>
+    <div class="row">
+      <span class="pill"><span class="dot" id="camDot"></span> القبعـة</span>
+      <span class="pill"><span class="dot" id="modelDot"></span> النماذج</span>
+      <span class="pill"><span class="dot" id="voiceDot"></span> الصوت</span>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <h2>المشهد</h2>
+        <div class="stage">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <div class="badges">
+            <span class="badge">إعلان كل <strong id="delayLbl">8</strong> ثانية</span>
+            <span class="badge">مساحة دنيا &gt; <strong id="minAreaLbl">1200</strong> px²</span>
+            <span class="badge select">
+              كاشف:
+              <select id="detectorSel">
+                <option value="coco" selected>COCO-SSD</option>
+                <option value="yolo">YOLO (ONNX)</option>
+                <option value="auto">Auto (YOLO ثم COCO)</option>
+              </select>
+            </span>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button id="startBtn">▶️ بدء</button>
+          <button id="stopBtn" disabled>⏹️ إيقاف</button>
+          <button id="addFaceBtn" disabled>➕ حفظ وجه (اسم)</button>
+          <button id="addObjBtn" disabled>🛒 حفظ منتج</button>
+          <button id="clearDbBtn" class="danger">🗑️ مسح قاعدة الوجوه</button>
+          <label class="row">
+            <span class="chip">تأخير الإعلان</span>
+            <input id="delay" type="range" min="3" max="20" step="1" value="8" />
+          </label>
+          <label class="row">
+            <span class="chip">المساحة الدنيا</span>
+            <input id="minArea" type="range" min="400" max="6000" step="100" value="1200" />
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>اللوحة الجانبية</h2>
+        <div class="log" id="log"></div>
+        <div class="toolbar">
+          <div class="row"><span class="chip">الأسماء المحفوظة:</span><span id="namesList" class="muted">—</span></div>
+          <div class="row"><span class="chip">المنتجات المحفوظة:</span><span id="prodList" class="muted">—</span></div>
+          <div class="row"><span class="chip">تعليمات:</span><span class="kbd">انقر</span> على وجه أو جسم ثم <span class="kbd">➕ حفظ وجه</span> أو <span class="kbd">🛒 حفظ منتج</span></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      صنـع بواســـطة طلاب أكاديميــة يوريكــــا .
+      <a href="https://linktr.ee/visioncap" target="_blank" style="color:#ecf3ff">اضغط هنا لزيارة المشروع</a>
+    </footer>
+  </div>
+
+  <script>
+    async function waitForFaceApi(){
+      const t0 = performance.now();
+      while(typeof window.faceapi==='undefined'){
+        await new Promise(r=>setTimeout(r,40));
+        if(performance.now()-t0>15000) throw new Error('face-api.js لم تُحمّل');
+      }
+    }
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const addFaceBtn = document.getElementById('addFaceBtn');
+    const addObjBtn  = document.getElementById('addObjBtn');
+    const clearDbBtn = document.getElementById('clearDbBtn');
+    const namesList = document.getElementById('namesList');
+    const prodListEl = document.getElementById('prodList');
+    const delayCtl = document.getElementById('delay');
+    const minAreaCtl = document.getElementById('minArea');
+    const delayLbl = document.getElementById('delayLbl');
+    const minAreaLbl = document.getElementById('minAreaLbl');
+    const camDot = document.getElementById('camDot');
+    const modelDot = document.getElementById('modelDot');
+    const voiceDot = document.getElementById('voiceDot');
+    const logEl = document.getElementById('log');
+    const detectorSel = document.getElementById('detectorSel');
+
+    let announcementDelay = Number(delayCtl.value);
+    let minBoxArea = Number(minAreaCtl.value);
+    let running = false, detectionLoopId = null, stream = null;
+    let selectedFaceBox = null, selectedObjBox = null;
+    let lastFaceResults = [], lastObjResults = [];
+    let faceOpts;
+    const speakName = "Nushmee";
+
+    function speak(text){
+      try{
+        const u = new SpeechSynthesisUtterance(text);
+        const en = speechSynthesis.getVoices().find(v=>/en/i.test(v.lang)||/english/i.test(v.name));
+        if(en) u.voice = en;
+        u.rate = 1; u.volume = 1; u.pitch = 1;
+        speechSynthesis.speak(u);
+        voiceDot.classList.add('on'); setTimeout(()=>voiceDot.classList.remove('on'),600);
+      }catch(e){ log('❌ '+e.message); }
+    }
+
+    const FACE_DB_KEY = 'smartcam_faces_v1';
+    function loadFaceDB(){
+      try{
+        const raw = localStorage.getItem(FACE_DB_KEY);
+        if(!raw) return [];
+        const arr = JSON.parse(raw);
+        return arr.map(x=>({name:x.name, descriptors:x.descriptors.map(d=>new Float32Array(d))}));
+      }catch{ return []; }
+    }
+    function saveFaceDB(db){
+      const serial = db.map(e=>({name:e.name, descriptors:e.descriptors.map(d=>Array.from(d))}));
+      localStorage.setItem(FACE_DB_KEY, JSON.stringify(serial));
+      renderNames();
+    }
+    let faceDB = loadFaceDB();
+    function renderNames(){ namesList.textContent = faceDB.length ? faceDB.map(e=>e.name).join('، ') : '—'; }
+    renderNames();
+
+    const OBJECT_DB_KEY = 'smartcam_objects_v1';
+    function loadObjectDB(){
+      try{
+        const raw = localStorage.getItem(OBJECT_DB_KEY);
+        if(!raw) return [];
+        const arr = JSON.parse(raw);
+        return arr.map(x=>({name:x.name, hist:new Float32Array(x.hist), thumb:x.thumb||null}));
+      }catch{ return []; }
+    }
+    function saveObjectDB(db){
+      const serial = db.map(e=>({name:e.name, hist:Array.from(e.hist), thumb:e.thumb||null}));
+      localStorage.setItem(OBJECT_DB_KEY, JSON.stringify(serial));
+      renderProducts();
+    }
+    let objectDB = loadObjectDB();
+    function renderProducts(){ prodListEl.textContent = objectDB.length ? objectDB.map(e=>e.name).join('، ') : '—'; }
+    renderProducts();
+
+    clearDbBtn.addEventListener('click',()=>{
+      if(confirm('مسح جميع الوجوه المحفوظة؟')){ faceDB=[]; saveFaceDB(faceDB); log('🗑️ تم مسح قاعدة الوجوه'); }
+    });
+    delayCtl.addEventListener('input',()=>{announcementDelay=+delayCtl.value; delayLbl.textContent=announcementDelay;});
+    minAreaCtl.addEventListener('input',()=>{minBoxArea=+minAreaCtl.value; minAreaLbl.textContent=minArea;});
+
+    async function loadFaceModels(){
+      await waitForFaceApi();
+      const SOURCES = ['./models','models','https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights'];
+      for(const base of SOURCES){
+        try{
+          await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(base),
+            faceapi.nets.faceLandmark68Net.loadFromUri(base),
+            faceapi.nets.faceRecognitionNet.loadFromUri(base)
+          ]);
+          faceOpts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+          log('✅ نماذج الوجه من: '+base);
+          return;
+        }catch(e){}
+      }
+      throw new Error('تعذر تحميل نماذج الوجه');
+    }
+
+    async function startCamera(){
+      if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ log('❌ المتصفح لا يدعم getUserMedia.'); return; }
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({ video:{width:{ideal:1280},height:{ideal:720}}, audio:false });
+        video.srcObject = stream; await video.play(); resizeCanvas();
+        camDot.classList.add('on');
+        startBtn.disabled = true; stopBtn.disabled = false; addFaceBtn.disabled = false; addObjBtn.disabled = false;
+        running = true; loop();
+      }catch(e){ log('❌ تعذّر فتح القبعـة: '+(e?.name? e.name+': ':'')+(e?.message||e)); }
+    }
+    function stopCamera(){
+      running = false; if(detectionLoopId) cancelAnimationFrame(detectionLoopId);
+      if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+      startBtn.disabled = false; stopBtn.disabled = true; addFaceBtn.disabled = true; addObjBtn.disabled = true;
+      camDot.classList.remove('on');
+    }
+    window.addEventListener('resize', resizeCanvas);
+    function resizeCanvas(){ const {videoWidth:w, videoHeight:h}=video; if(!w||!h) return; canvas.width=w; canvas.height=h; }
+
+    startBtn.addEventListener('click', async()=>{ if(!objectDetector.ready){ await objectDetector.init(detectorSel.value); } await startCamera(); });
+    stopBtn.addEventListener('click', stopCamera);
+    detectorSel.addEventListener('change', async ()=>{ objectDetector.ready = false; await objectDetector.init(detectorSel.value); });
+
+    async function detectFaces(){
+      try{
+        if(!faceOpts) return [];
+        const dets = await faceapi.detectAllFaces(video, faceOpts).withFaceLandmarks().withFaceDescriptors();
+        return dets.map(d=>({ box:d.detection.box, descriptor:d.descriptor }));
+      }catch{ return []; }
+    }
+    function bestMatch(descriptor){
+      if(faceDB.length===0) return {label:'Unknown', distance:1};
+      let best = {label:'Unknown', distance:1};
+      for(const p of faceDB){
+        for(const d of p.descriptors){
+          const dist = faceapi.euclideanDistance(descriptor, d);
+          if(dist < best.distance) best = {label:p.name, distance:dist};
+        }
+      }
+      return (best.distance <= 0.45) ? best : {label:'Unknown', distance:best.distance};
+    }
+
+    canvas.addEventListener('click',(e)=>{
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width/rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height/rect.height);
+      selectedObjBox = null; selectedFaceBox = null;
+
+      for(const O of lastObjResults){
+        const [bx,by,bw,bh] = O.bbox;
+        if(x>=bx && x<=bx+bw && y>=by && y<=by+bh){ selectedObjBox = O; break; }
+      }
+      if(selectedObjBox){ log('✅ تم اختيار جسم. اضغط "🛒 حفظ منتج".'); return; }
+
+      for(const F of lastFaceResults){
+        const {x:bx,y:by,width:bw,height:bh} = F.box;
+        if(x>=bx && x<=bx+bw && y>=by && y<=by+bh){ selectedFaceBox = F; break; }
+      }
+      if(selectedFaceBox) log('✅ تم اختيار وجه. اضغط "حفظ وجه (اسم)".');
+    });
+
+    addFaceBtn.addEventListener('click', ()=>{
+      if(!selectedFaceBox){ alert('انقر على وجه غير معروف أولاً ثم اضغط حفظ.'); return; }
+      const name = prompt('أدخل اسم الشخص:'); if(!name) return;
+      const ex = faceDB.find(p=>p.name===name);
+      if(ex) ex.descriptors.push(selectedFaceBox.descriptor);
+      else faceDB.push({name, descriptors:[selectedFaceBox.descriptor]});
+      saveFaceDB(faceDB); log('💾 تم حفظ: '+name); speak(`${name} has been saved.`);
+    });
+
+    const _featCanvas = document.createElement('canvas');
+    const _featCtx = _featCanvas.getContext('2d');
+    const OBJ_HIST_BINS = 16;
+    const OBJ_MATCH_THR = 0.25;
+
+    function computeObjHistFromBBox(videoEl, bbox){
+      const [x,y,w,h] = bbox.map(v=>Math.max(0, Math.floor(v)));
+      if(w<=1||h<=1) return new Float32Array(OBJ_HIST_BINS*3);
+      _featCanvas.width=64; _featCanvas.height=64;
+      _featCtx.drawImage(videoEl, x,y,w,h, 0,0,64,64);
+      const data = _featCtx.getImageData(0,0,64,64).data;
+      const bins=OBJ_HIST_BINS, hist=new Float32Array(bins*3);
+      for(let i=0;i<data.length;i+=4){
+        hist[data[i]>>4]++; hist[bins+(data[i+1]>>4)]++; hist[2*bins+(data[i+2]>>4)]++;
+      }
+      const N=(data.length/4); for(let i=0;i<hist.length;i++) hist[i]/=N;
+      return hist;
+    }
+    function chi2(a,b){ let s=0; for(let i=0;i<a.length;i++){ const num=(a[i]-b[i])**2; const den=a[i]+b[i]+1e-6; s+=num/den; } return 0.5*s; }
+    function matchCustomObject(hist){
+      if(!objectDB.length) return null;
+      let best={name:null,dist:1e9};
+      for(const o of objectDB){ const d=chi2(hist,o.hist); if(d<best.dist) best={name:o.name,dist:d}; }
+      return (best.dist<OBJ_MATCH_THR)?best.name:null;
+    }
+    function captureThumb(videoEl, bbox){
+      const [x,y,w,h] = bbox.map(v=>Math.max(0, Math.floor(v)));
+      const c=document.createElement('canvas'), cc=c.getContext('2d');
+      c.width=96; c.height=96; cc.drawImage(videoEl,x,y,w,h,0,0,96,96); return c.toDataURL('image/jpeg',0.75);
+    }
+    addObjBtn.addEventListener('click', ()=>{
+      if(!selectedObjBox){ alert('انقر على إطار أحمر (جسم) ثم اضغط "🛒 حفظ منتج".'); return; }
+      const name = prompt('اسم المنتج؟'); if(!name) return;
+      const hist = computeObjHistFromBBox(video, selectedObjBox.bbox);
+      const thumb = captureThumb(video, selectedObjBox.bbox);
+      objectDB.push({ name, hist, thumb }); saveObjectDB(objectDB);
+      log('🛒 تم حفظ المنتج: '+name); speak(`${speakName}, ${name} has been saved.`);
+    });
+
+    const COCO80=["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed","dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"];
+
+    const objectDetector={
+      engine:'coco', ready:false, cocoModel:null, yoloSession:null, inputSize:640,
+      async init(pref='coco'){
+        this.engine=pref; this.ready=false; modelDot.classList.remove('on');
+        if(pref==='yolo'||pref==='auto'){
+          const ok=await this.tryLoadYOLO();
+          if(ok){ this.engine='yolo'; this.ready=true; modelDot.classList.add('on'); log('✅ YOLO (ONNX) جاهز'); return; }
+          if(pref==='yolo'){ log('⚠️ تعذّر تحميل YOLO. تحقق من: models/yolo/yolov8n.onnx'); }
+        }
+        this.cocoModel=await cocoSsd.load({base:'lite_mobilenet_v2'});
+        this.engine='coco'; this.ready=true; modelDot.classList.add('on'); log('✅ COCO-SSD جاهز');
+      },
+      async tryLoadYOLO(){
+        try{
+          const resp=await fetch('models/yolo/yolov8n.onnx',{method:'HEAD'});
+          if(!resp.ok) return false;
+          const providers=ort.env.webgpu?['webgpu','wasm']:['wasm'];
+          this.yoloSession=await ort.InferenceSession.create('models/yolo/yolov8n.onnx',{executionProviders:providers});
+          return true;
+        }catch(e){ return false; }
+      },
+      async detect(videoEl){
+        if(!this.ready) return [];
+        if(this.engine==='coco'){
+          const preds=await this.cocoModel.detect(videoEl,20);
+          return preds.map(p=>({label:p.class, score:p.score, bbox:p.bbox}));
+        }else{
+          const size=this.inputSize;
+          const off=this._off||(this._off=document.createElement('canvas'));
+          const ctx2=this._ctx2||(this._ctx2=off.getContext('2d'));
+          off.width=size; off.height=size;
+          const vw=videoEl.videoWidth, vh=videoEl.videoHeight;
+          const scale=Math.min(size/vw,size/vh);
+          const nw=Math.round(vw*scale), nh=Math.round(vh*scale);
+          const dx=Math.floor((size-nw)/2), dy=Math.floor((size-nh)/2);
+          ctx2.fillStyle='#000'; ctx2.fillRect(0,0,size,size);
+          ctx2.drawImage(videoEl,0,0,vw,vh,dx,dy,nw,nh);
+          const imgData=ctx2.getImageData(0,0,size,size).data;
+          const chw=new Float32Array(3*size*size); let i=0,p=0;
+          for(let y=0;y<size;y++){ for(let x=0;x<size;x++){ const r=imgData[p]/255,g=imgData[p+1]/255,b=imgData[p+2]/255; chw[i]=r; chw[i+size*size]=g; chw[i+2*size*size]=b; i++; p+=4; } }
+          const input=new ort.Tensor('float32',chw,[1,3,size,size]);
+          const out=await this.yoloSession.run({images:input});
+          const outName=Object.keys(out)[0];
+          const data=out[outName].data; const num=out[outName].dims[1]; const stride=out[outName].dims[2];
+          const boxes=[];
+          for(let n=0;n<num;n++){
+            const offIdx=n*stride;
+            const cx=data[offIdx+0], cy=data[offIdx+1], w=data[offIdx+2], h=data[offIdx+3];
+            const obj=data[offIdx+4];
+            let best=-1,bestScore=0;
+            for(let c=0;c<80;c++){ const s=data[offIdx+5+c]; if(s>bestScore){bestScore=s; best=c;} }
+            const score=obj*bestScore; if(score<0.6) continue;
+            const x1=cx-w/2, y1=cy-h/2; const inv=1/scale;
+            const rx=(x1-dx)*inv, ry=(y1-dy)*inv, rw=w*inv, rh=h*inv;
+            boxes.push({label:COCO80[best]||'object', score, bbox:[rx,ry,rw,rh]});
+          }
+          boxes.sort((a,b)=>b.score-a.score);
+          const keep=[];
+          function iou(a,b){ const [ax,ay,aw,ah]=a,[bx,by,bw,bh]=b; const ax2=ax+aw,ay2=ay+ah,bx2=bx+bw,by2=by+bh; const ix=Math.max(ax,bx),iy=Math.max(ay,by); const ix2=Math.min(ax2,bx2),iy2=Math.min(ay2,by2); const iw=Math.max(0,ix2-ix), ih=Math.max(0,iy2-iy); const inter=iw*ih, union=aw*ah + bw*bh - inter; return union>0?inter/union:0; }
+          for(const b of boxes){ let drop=false; for(const k of keep){ if(iou(b.bbox,k.bbox)>0.5){drop=true; break;} } if(!drop) keep.push(b); if(keep.length>=50) break; }
+          return keep;
+        }
+      }
+    };
+
+    async function detectObjects(){
+      if(!objectDetector.ready) return [];
+      try{ return await objectDetector.detect(video); }
+      catch(e){ log('⚠️ تعذّر الكشف: '+(e?.message||e)); return []; }
+    }
+
+    function drawBox(x,y,w,h,color){
+      ctx.strokeStyle=color; ctx.lineWidth=3; ctx.shadowColor=color; ctx.shadowBlur=10;
+      ctx.strokeRect(x,y,w,h); ctx.shadowBlur=0;
+    }
+    function drawLabel(x,y,text){
+      ctx.font='13px ui-monospace, Consolas, monospace';
+      const pad=6; const tw=ctx.measureText(text).width + pad*2;
+      ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(x-3,y-18,tw,20);
+      ctx.fillStyle='#fff'; ctx.fillText(text, x+pad-3, y-4);
+    }
+    function log(msg){
+      const el=document.createElement('div'); el.className='item';
+      const t=new Date().toLocaleTimeString();
+      el.innerHTML=`<span>${msg??''}</span><span class="muted">${t}</span>`;
+      logEl.prepend(el);
+    }
+
+    // --- فلاش حول البوكس المعلن عنه فقط ---
+    const pulses=[];
+    function addPulse(bbox, color='#22c55e'){
+      pulses.push({bbox:[...bbox], color, t0:performance.now()/1000, dur:0.45});
+    }
+    function renderPulses(now){
+      for(let i=pulses.length-1;i>=0;i--){
+        const p=pulses[i]; const age=now-p.t0; if(age>p.dur){ pulses.splice(i,1); continue; }
+        const k=age/p.dur; const grow=10*k; const alpha=1-k;
+        const [x,y,w,h]=p.bbox;
+        ctx.save();
+        ctx.globalAlpha=alpha;
+        ctx.lineWidth=4+4*(1-k);
+        ctx.strokeStyle=p.color;
+        ctx.shadowColor=p.color; ctx.shadowBlur=18;
+        ctx.strokeRect(x-grow,y-grow,w+2*grow,h+2*grow);
+        ctx.restore();
+      }
+    }
+
+    // --- تتبّع دقيق + منع تكرار ---
+    let tracks=[]; let nextTrackId=1;
+    function iouBox(a,b){
+      const [ax,ay,aw,ah]=a,[bx,by,bw,bh]=b; const ax2=ax+aw,ay2=ay+ah,bx2=bx+bw,by2=by+bh;
+      const ix=Math.max(ax,bx),iy=Math.max(ay,by); const ix2=Math.min(ax2,bx2),iy2=Math.min(ay2,by2);
+      const iw=Math.max(0,ix2-ix), ih=Math.max(0,iy2-iy); const inter=iw*ih, union=aw*ah+bw*bh-inter;
+      return union>0?inter/union:0;
+    }
+    function center(b){ return [b[0]+b[2]/2, b[1]+b[3]/2]; }
+    function dist2(a,b){ const dx=a[0]-b[0], dy=a[1]-b[1]; return Math.hypot(dx,dy); }
+
+    function updateTracks(dets, now){
+      const matched=new Set();
+      const MOVE_THR=60;     // لازم يتحرك هالقد لنعيد الإعلان
+      const TTL=2.0;         // لو اختفى >2 ثواني نعتبره راح
+      const REPEAT_EVERY=announcementDelay; // حسب السلايدر
+
+      for(const d of dets){
+        let best=null, bestIoU=0;
+        for(const t of tracks){
+          if(t.key!==d.key) continue;
+          const i=iouBox(t.bbox, d.bbox);
+          if(i>bestIoU){ bestIoU=i; best=t; }
+        }
+        if(best && bestIoU>=0.5){
+          const prevC=center(best.bbox), curC=center(d.bbox);
+          best.bbox=d.bbox; best.lastSeen=now; matched.add(best.id);
+          if(!best.lastSpoken || ((now-best.lastSpoken)>REPEAT_EVERY && dist2(prevC,curC)>MOVE_THR)){
+            speak(d.say); log('🔊 '+d.say); addPulse(d.bbox, d.color); best.lastSpoken=now;
+          }
+        }else{
+          const t={id:nextTrackId++, key:d.key, bbox:d.bbox, lastSeen:now, lastSpoken:0};
+          tracks.push(t); matched.add(t.id);
+          speak(d.say); log('🆕 '+d.say); addPulse(d.bbox, d.color); t.lastSpoken=now;
+        }
+      }
+      for(let i=tracks.length-1;i>=0;i--){ if(now-tracks[i].lastSeen>TTL) tracks.splice(i,1); }
+    }
+
+    async function loop(){
+      if(!running) return;
+      detectionLoopId=requestAnimationFrame(loop);
+      if(video.readyState<2) return;
+      resizeCanvas();
+
+      const [faces, objects] = await Promise.all([detectFaces(), detectObjects()]);
+      lastFaceResults=faces; lastObjResults=objects;
+
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      const packets=[];
+      for(const F of faces){
+        const m=bestMatch(F.descriptor);
+        const {x,y,width,height}=F.box;
+        drawBox(x,y,width,height, m.label==='Unknown'? '#10b981' : '#3b82f6');
+        drawLabel(x, y-8, `${m.label} ${m.label==='Unknown'?'':'(✓) '+m.distance.toFixed(2)}`);
+        if(m.label!=='Unknown'){
+          packets.push({ key:'face:'+m.label, bbox:[x,y,width,height], say:`${speakName}, this person is ${m.label}`, color:'#3b82f6' });
+        }
+      }
+
+      for(const O of objects){
+        if(O.label==='person') continue; // ما نعيد كلمة person
+        const [x,y,w,h]=O.bbox; const area=w*h;
+        if(area<minBoxArea || O.score<0.6) continue;
+
+        let showLabel=O.label;
+        if(objectDB.length){
+          const hist=computeObjHistFromBBox(video,O.bbox);
+          const alias=matchCustomObject(hist);
+          if(alias) showLabel=alias;
+        }
+        drawBox(x,y,w,h,'#ef4444'); drawLabel(x, y-8, `${showLabel}`);
+        packets.push({ key:'obj:'+showLabel, bbox:[x,y,w,h], say:`${speakName}, this item is ${showLabel}`, color:'#ef4444' });
+      }
+
+      updateTracks(packets, performance.now()/1000);
+      renderPulses(performance.now()/1000); // ارسم الفلاشات فوق كل شيء
+    }
+
+    (async()=>{
+      try{
+        await loadFaceModels();
+        await objectDetector.init('coco');
+        await startCamera();
+        log('🚀 جاهزون. انقر على وجه غير معروف ثم “حفظ وجه (اسم)”، أو على جسم ثم “🛒 حفظ منتج”.');
+      }catch(e){ log('ℹ️ '+(e?.message||e)); }
+    })();
+  </script>
+</body>
+</html>
